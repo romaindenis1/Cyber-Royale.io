@@ -29,7 +29,7 @@ async function seed() {
       {
         id: 2,
         name: "Spectre",
-        price: 500,
+        price: 200,
         class: "Speed",
         skins: [
           { name: "Default", value: "#aa00ff" },
@@ -41,7 +41,7 @@ async function seed() {
       {
         id: 3,
         name: "Techno",
-        price: 1000,
+        price: 250,
         class: "Support",
         skins: [
           { name: "Default", value: "#ffee00" },
@@ -53,7 +53,7 @@ async function seed() {
       {
         id: 4,
         name: "Blaze",
-        price: 1500,
+        price: 300,
         class: "Damage",
         skins: [
           { name: "Default", value: "#ff4500" },
@@ -64,7 +64,7 @@ async function seed() {
       {
         id: 5,
         name: "Titan",
-        price: 2000,
+        price: 350,
         class: "Tank",
         skins: [
           { name: "Default", value: "#556b2f" },
@@ -75,7 +75,7 @@ async function seed() {
       {
         id: 6,
         name: "Volt",
-        price: 1800,
+        price: 300,
         class: "Speed",
         skins: [
           { name: "Default", value: "#00ffff" },
@@ -86,7 +86,7 @@ async function seed() {
       {
         id: 7,
         name: "Medic",
-        price: 2200,
+        price: 350,
         class: "Support",
         skins: [
           { name: "Default", value: "#ffc0cb" },
@@ -97,7 +97,7 @@ async function seed() {
       {
         id: 8,
         name: "Ghost",
-        price: 2500,
+        price: 400,
         class: "Speed",
         skins: [
           { name: "Default", value: "#add8e6" },
@@ -108,7 +108,7 @@ async function seed() {
       {
         id: 9,
         name: "Frost",
-        price: 2000,
+        price: 400,
         class: "Damage",
         skins: [
           { name: "Default", value: "#e0ffff" },
@@ -119,7 +119,7 @@ async function seed() {
       {
         id: 10,
         name: "Sniper",
-        price: 3000,
+        price: 500,
         class: "Damage",
         skins: [
           { name: "Default", value: "#8b4513" },
@@ -130,7 +130,7 @@ async function seed() {
       {
         id: 11,
         name: "Brawler",
-        price: 1200,
+        price: 250,
         class: "Tank",
         skins: [
           { name: "Default", value: "#b22222" },
@@ -141,7 +141,7 @@ async function seed() {
       {
         id: 12,
         name: "Engineer",
-        price: 2400,
+        price: 350,
         class: "Support",
         skins: [
           { name: "Default", value: "#ffa500" },
@@ -152,7 +152,7 @@ async function seed() {
       {
         id: 13,
         name: "Shadow",
-        price: 2800,
+        price: 400,
         class: "Damage",
         skins: [
           { name: "Default", value: "#2f4f4f" },
@@ -163,7 +163,7 @@ async function seed() {
       {
         id: 14,
         name: "Goliath",
-        price: 2600,
+        price: 400,
         class: "Tank",
         skins: [
           { name: "Default", value: "#808000" },
@@ -174,7 +174,7 @@ async function seed() {
       {
         id: 15,
         name: "Nova",
-        price: 3500,
+        price: 450,
         class: "Damage",
         skins: [
           { name: "Default", value: "#9932cc" },
