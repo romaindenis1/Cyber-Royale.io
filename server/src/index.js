@@ -28,21 +28,22 @@ app.use(cors());
 app.use(express.json());
 
 // API Routes
-app.use("/auth", authRoutes); // Legacy or specific path? Client uses /api sometimes?
-// Checking context: dashboard uses auth.fetchProfile().
-// Let's stick to simple paths or prefixed. The client `api.js` usually defines the base URL.
-// Previous file had: app.use("/auth", ...);
-// But wait, the edit I TRIED to make used /api/ prefixes.
-// Let's stick to what was likely there before: /auth, /shop, /user
-// AND add /leaderboard.
+const path = require("path");
+
+// ... imports ... imported above
+
+// Serve Static Files
+app.use(express.static(path.join(__dirname, "../../client/dist")));
+
+// API Routes
 app.use("/auth", authRoutes);
 app.use("/shop", shopRoutes);
 app.use("/user", userRoutes);
 app.use("/leaderboard", leaderboardRoutes);
 
-// Root route
-app.get("/", (req, res) => {
-  res.send("Neon Heroes API Running");
+// Catch-all handle for SPA
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../../client/dist/index.html"));
 });
 
 // Database Sync & Start
