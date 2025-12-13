@@ -1,0 +1,117 @@
+:root {
+  --bg-color: #0d0d12;
+  --surface-color: #1a1a23;
+  --primary: #00f3ff;
+  --primary-dim: #00f3ff80;
+  --secondary: #ff00ff;
+  --accent: #ffee00;
+  --text-main: #ffffff;
+  --text-dim: #a0a0b0;
+
+  --font-main: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+
+  --shadow-neon: 0 0 10px var(--primary), 0 0 20px var(--primary-dim);
+  --shadow-neon-sec: 0 0 10px var(--secondary), 0 0 20px #ff00ff80;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: var(--font-main);
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+/* Utilities */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  padding: 0.8rem 1.5rem;
+  font-size: 1rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 5px var(--primary-dim);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn:hover {
+  background: var(--primary);
+  color: var(--bg-color);
+  box-shadow: 0 0 20px var(--primary);
+}
+
+.btn-secondary {
+  border-color: var(--secondary);
+  color: var(--secondary);
+  box-shadow: 0 0 5px #ff00ff80;
+}
+
+.btn-secondary:hover {
+  background: var(--secondary);
+  box-shadow: 0 0 20px var(--secondary);
+}
+
+.input-field {
+  background: var(--surface-color);
+  border: 1px solid #333;
+  color: white;
+  padding: 0.8rem;
+  width: 100%;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+}
+
+.input-field:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 5px var(--primary-dim);
+}
+
+.card {
+  background: var(--surface-color);
+  padding: 1.5rem;
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary-dim);
+}
+
+.neon-text {
+  color: var(--primary);
+  text-shadow: 0 0 10px var(--primary-dim);
+}
+
+.game-canvas {
+  border: 2px solid var(--primary);
+  box-shadow: 0 0 20px var(--primary-dim);
+  background: #000;
+  display: block;
+  margin: 0 auto;
+}
