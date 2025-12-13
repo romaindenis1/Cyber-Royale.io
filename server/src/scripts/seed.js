@@ -188,11 +188,22 @@ async function seed() {
       updateOnDuplicate: ["name", "price", "stats", "class", "skins"],
     });
     console.log("Heroes seeded successfully!");
-    process.exit(0);
+
+    // Only exit if run directly
+    if (require.main === module) {
+      process.exit(0);
+    }
   } catch (error) {
     console.error("Seeding failed:", error);
-    process.exit(1);
+    if (require.main === module) {
+      process.exit(1);
+    }
   }
 }
 
-seed();
+// Run if called directly: node seed.js
+if (require.main === module) {
+  seed();
+}
+
+module.exports = seed;

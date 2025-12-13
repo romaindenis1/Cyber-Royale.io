@@ -49,10 +49,21 @@ app.get("*", (req, res) => {
 // Database Sync & Start
 const PORT = process.env.PORT || 3005;
 
+const seed = require("./scripts/seed");
+const { Hero } = require("./models");
+
 sequelize
   .sync({ alter: true }) // Safer to use alter in dev
-  .then(() => {
+  .then(async () => {
     console.log("Database synced");
+
+    // Auto-seed if empty
+    const heroCount = await Hero.count();
+    if (heroCount === 0) {
+      console.log("No heroes found. Seeding initial data...");
+      await seed();
+    }
+
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       // Start Game Server
