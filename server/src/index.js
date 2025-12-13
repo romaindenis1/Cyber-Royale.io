@@ -58,11 +58,9 @@ sequelize
     console.log("Database synced");
 
     // Auto-seed if empty
-    const heroCount = await Hero.count();
-    if (heroCount === 0) {
-      console.log("No heroes found. Seeding initial data...");
-      await seed();
-    }
+    // Always check for updates in seed data (Prices, etc.)
+    console.log("Checking seed data...");
+    await seed();
 
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

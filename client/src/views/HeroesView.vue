@@ -98,7 +98,7 @@ const goBack = () => {
       </button>
       <div class="header-info">
         <h1 class="page-title glitch-effect" data-text="ARMORY">ARMORY</h1>
-        <div class="credits">CREDITS: {{ auth.user?.coins || 0 }} ðŸŸ¡</div>
+        <div class="credits">CREDITS: {{ auth.user?.coins || 0 }} 🪙</div>
       </div>
     </div>
 

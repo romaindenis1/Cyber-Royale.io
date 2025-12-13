@@ -2,14 +2,11 @@ const { sequelize, Hero } = require("../models");
 
 async function seed() {
   try {
-    await sequelize.sync({ force: true }); // Drop and recreate tables
+    // Safe Sync: Update existing tables without dropping data
+    await sequelize.sync({ alter: true });
 
-    // Check if heroes exist
-    // const count = await Hero.count();
-    // if (count > 0) {
-    //   console.log("Heroes already seeded.");
-    //   process.exit(0);
-    // }
+    // Ensure Heroes table is updated with new prices
+    // We do NOT exit if heroes exist, allowing price updates to flow through.
 
     const heroes = [
       {
