@@ -7,7 +7,7 @@ module.exports = (req, res, next) => {
   try {
     const verified = jwt.verify(
       token.replace("Bearer ", ""),
-      process.env.JWT_SECRET
+      process.env.JWT_SECRET || "default_secret_key"
     );
     req.user = verified;
     next();
