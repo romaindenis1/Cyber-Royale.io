@@ -33,7 +33,11 @@ class Player {
     this.isPhasing = false; // Walk through walls
     this.isInvisible = false;
     this.isRooted = false; // Cannot move
+    this.isRooted = false; // Cannot move
+    this.isRooted = false; // Cannot move
     this.rapidFire = false; // Fast shooting
+    this.isSkillActive = false; // Visual Aura Flag
+    this.freezeShotsActive = false; // Frost skill duration flag
   }
 
   update(dt) {
@@ -44,35 +48,57 @@ class Player {
     if (this.isRooted) return; // Skip movement
 
     // Basic movement logic
+    // Basic movement logic
     const moveStep = this.speed * dt;
-    let newX = this.x;
-    let newY = this.y;
+    
+    // --- X AXIS MOVEMENT ---
+    let dx = 0;
+    if (this.keys.a) dx -= moveStep;
+    if (this.keys.d) dx += moveStep;
 
-    if (this.keys.w) newY -= moveStep;
-    if (this.keys.s) newY += moveStep;
-    if (this.keys.a) newX -= moveStep;
-    if (this.keys.d) newX += moveStep;
-
-    // Check Wall Collisions (Skip if Phasing)
-    let collided = false;
-    if (!this.isPhasing) {
-      const pRect = { x: newX - 20, y: newY - 20, w: 40, h: 40 };
-      for (const obs of MapData.obstacles) {
-        if (
-          pRect.x < obs.x + obs.w &&
-          pRect.x + pRect.w > obs.x &&
-          pRect.y < obs.y + obs.h &&
-          pRect.y + pRect.h > obs.y
-        ) {
-          collided = true;
-          break;
+    if (dx !== 0) {
+      const nextX = this.x + dx;
+      let colX = false;
+      if (!this.isPhasing) {
+        const pRect = { x: nextX - 20, y: this.y - 20, w: 40, h: 40 };
+        for (const obs of MapData.obstacles) {
+          if (
+            pRect.x < obs.x + obs.w &&
+            pRect.x + pRect.w > obs.x &&
+            pRect.y < obs.y + obs.h &&
+            pRect.y + pRect.h > obs.y
+          ) {
+            colX = true;
+            break;
+          }
         }
       }
+      if (!colX) this.x = nextX;
     }
 
-    if (!collided) {
-      this.x = newX;
-      this.y = newY;
+    // --- Y AXIS MOVEMENT ---
+    let dy = 0;
+    if (this.keys.w) dy -= moveStep;
+    if (this.keys.s) dy += moveStep;
+
+    if (dy !== 0) {
+      const nextY = this.y + dy;
+      let colY = false;
+      if (!this.isPhasing) {
+        const pRect = { x: this.x - 20, y: nextY - 20, w: 40, h: 40 };
+        for (const obs of MapData.obstacles) {
+          if (
+            pRect.x < obs.x + obs.w &&
+            pRect.x + pRect.w > obs.x &&
+            pRect.y < obs.y + obs.h &&
+            pRect.y + pRect.h > obs.y
+          ) {
+            colY = true;
+            break;
+          }
+        }
+      }
+      if (!colY) this.y = nextY;
     }
 
     // Clamp to map
@@ -99,21 +125,11 @@ class Player {
       vx,
       vy,
       ownerId: this.id,
-      color: this.nextShotFreeze ? "#00ffff" : this.color,
+      color: this.freezeShotsActive ? "#00ffff" : this.color,
       life: 2000,
-      effect: this.nextShotFreeze ? "FREEZE" : null,
+      effect: this.freezeShotsActive ? "FREEZE" : null,
       // damage: 15 (Default handled by server if omitted)
     };
-
-    // Consume Freeze Shot
-    if (this.nextShotFreeze) {
-      this.nextShotFreeze = false;
-      // Reset cooldown early? No, keep the duration duration.
-      // Actually, user wants timer to show duration. If shot is consumed, duration effectively ends?
-      // Let's stick to the 5s window. If shot, it's used.
-      // If I want the "Active" bar to disappear when shot is fired, I should reduce the CD.
-      // But for now, let's keep it simple.
-    }
   }
 
   useSkill() {
@@ -121,14 +137,21 @@ class Player {
     this.cooldowns.skill = this.hero.stats.cooldown;
     const name = this.hero.name;
 
+    // Generic: Set Active Flag
+    this.isSkillActive = true;
+    let duration = 0;
+
+    let result = null;
+
     // === TANK ===
     if (name === "Vanguard") {
-      this.cooldowns.skill += 3000; // Duration added
+      this.cooldowns.skill += 3000; 
+      duration = 3000;
       this.shieldActive = true;
       setTimeout(() => (this.shieldActive = false), 3000);
     } else if (name === "Titan") {
       this.cooldowns.skill += 5000;
-      // Juggernaut: Heal + Temp HP + Slow
+      duration = 5000;
       this.hp = Math.min(this.hp + 200, this.maxHp + 200);
       this.speed = this.baseSpeed * 0.5;
       setTimeout(() => {
@@ -136,7 +159,7 @@ class Player {
       }, 5000);
     } else if (name === "Brawler") {
       this.cooldowns.skill += 3000;
-      // Berserker: Rapid Fire + Speed
+      duration = 3000;
       this.rapidFire = true;
       this.speed = this.baseSpeed * 1.5;
       setTimeout(() => {
@@ -145,13 +168,10 @@ class Player {
       }, 3000);
     } else if (name === "Goliath") {
       this.cooldowns.skill += 3000;
-      // Fortress: Root + Invuln + Heal
+      duration = 3000;
       this.isRooted = true;
       this.shieldActive = true;
-
-      // HoT (Heal over Time) simulated by big chunk
       this.hp = Math.min(this.maxHp, this.hp + 100);
-
       setTimeout(() => {
         this.isRooted = false;
         this.shieldActive = false;
@@ -160,20 +180,58 @@ class Player {
 
     // === SPEED ===
     else if (name === "Spectre") {
-      // Blink (Instant)
-      const dist = 300;
-      this.x += Math.cos(this.mouseAngle) * dist;
-      this.y += Math.sin(this.mouseAngle) * dist;
+      duration = 500;
+
+      // Blink (Instant) - Safe Logic
+      const maxDist = 300;
+      let targetX = this.x + Math.cos(this.mouseAngle) * maxDist;
+      let targetY = this.y + Math.sin(this.mouseAngle) * maxDist;
+      
+      // Raycast back if hitting wall
+      let steps = 10;
+      let safe = false;
+      
+      for(let i=0; i<=steps; i++) {
+        // Linear interpolation from Target back to Origin
+        const factor = 1 - (i / steps); // 1.0, 0.9, ... 0.0
+        const mx = this.x + (targetX - this.x) * factor;
+        const my = this.y + (targetY - this.y) * factor;
+        
+        let collision = false;
+        const pRect = { x: mx - 20, y: my - 20, w: 40, h: 40 };
+        for (const obs of MapData.obstacles) {
+             if (
+               pRect.x < obs.x + obs.w &&
+               pRect.x + pRect.w > obs.x &&
+               pRect.y < obs.y + obs.h &&
+               pRect.y + pRect.h > obs.y
+             ) {
+               collision = true;
+               break;
+             }
+        }
+        
+        if (!collision) {
+             this.x = mx;
+             this.y = my;
+             safe = true;
+             break;
+        }
+      }
+      // If never safe (shouldn't happen since origin is safe), stay put
+      
       // Clamp
       this.x = Math.max(0, Math.min(MapData.width, this.x));
       this.y = Math.max(0, Math.min(MapData.height, this.y));
     } else if (name === "Volt") {
       this.cooldowns.skill += 2500;
+      duration = 2500;
       // Overload
       this.speed = this.baseSpeed * 2.5;
       setTimeout(() => (this.speed = this.baseSpeed), 2500);
     } else if (name === "Ghost") {
       this.cooldowns.skill += 3000;
+      duration = 3000;
       // Phase
       this.isPhasing = true;
       setTimeout(() => {
@@ -185,20 +243,24 @@ class Player {
     // === DAMAGE ===
     else if (name === "Blaze") {
       this.cooldowns.skill += 3000;
+      duration = 3000;
       // Rapid Fire
       this.rapidFire = true;
       setTimeout(() => (this.rapidFire = false), 3000);
     } else if (name === "Frost") {
       this.cooldowns.skill += 5000;
-      // Freeze Shot: Next shot freezes enemy
-      this.nextShotFreeze = true;
+      duration = 5000;
+      // Freeze Shot: All shots freeze for 5s
+      this.freezeShotsActive = true;
       setTimeout(() => {
-        this.nextShotFreeze = false;
-      }, 5000); // 5 seconds to take the shot
+        this.freezeShotsActive = false;
+      }, 5000);
     } else if (name === "Sniper") {
+      duration = 500;
       // Railgun Shot (Instant)
+
       const speed = 2000;
-      return {
+      result = {
         type: "PROJECTILE",
         id: Math.random().toString(36).substr(2, 9),
         x: this.x,
@@ -216,6 +278,7 @@ class Player {
       this.isInvisible = true;
       setTimeout(() => (this.isInvisible = false), 5000);
     } else if (name === "Nova") {
+      duration = 500;
       // Nova Blast (Instant)
       const projs = [];
       for (let i = 0; i < 8; i++) {
@@ -232,19 +295,23 @@ class Player {
           life: 1000,
         });
       }
-      return projs;
+      result = projs;
     }
 
     // === SUPPORT ===
     else if (name === "Techno") {
-      return { type: "MINE", x: this.x, y: this.y, ownerId: this.id };
+      duration = 500;
+      result = { type: "MINE", x: this.x, y: this.y, ownerId: this.id, life: 6000 };
     } else if (name === "Engineer") {
       this.cooldowns.skill += 5000;
+      duration = 5000;
       // Force Field Wall
       const wx = this.x + Math.cos(this.mouseAngle) * 50;
+         /// ... existing ...
       const wy = this.y + Math.sin(this.mouseAngle) * 50;
-      return {
+      result = {
         type: "WALL_TEMP",
+    //...
         x: wx - 40,
         y: wy - 10,
         w: 80,
@@ -253,9 +320,24 @@ class Player {
         angle: this.mouseAngle,
       };
     } else if (name === "Medic") {
+      duration = 500;
       // Self Heal (Instant)
       this.hp = Math.min(this.maxHp, this.hp + 100);
     }
+
+    // === COMMON AURA LOGIC ===
+    if (duration > 0 && name !== "Shadow") {
+       setTimeout(() => {
+          this.isSkillActive = false;
+       }, duration);
+    } else if (name !== "Shadow") {
+       this.isSkillActive = false;
+    } else {
+       // Shadow: ensure false
+       this.isSkillActive = false;
+    }
+
+    return result;
   }
   checkUnstuck() {
     // 1. Check if currently inside wall
@@ -276,12 +358,11 @@ class Player {
 
     if (!collided) return; // All good
 
-    // 2. Try to find a safe spot nearby (Up, Down, Left, Right)
+    // 2. Try to find a safe spot nearby (Spiral Search)
     const offsets = [
-      { x: 0, y: -50 }, // Up
-      { x: 0, y: 50 }, // Down
-      { x: -50, y: 0 }, // Left
-      { x: 50, y: 0 }, // Right
+      { x: 0, y: -50 }, { x: 0, y: 50 }, { x: -50, y: 0 }, { x: 50, y: 0 },
+      { x: 50, y: 50 }, { x: -50, y: -50 }, { x: 50, y: -50 }, { x: -50, y: 50 },
+      { x: 0, y: -100 }, { x: 0, y: 100 }, { x: -100, y: 0 }, { x: 100, y: 0 }
     ];
 
     for (const off of offsets) {
@@ -310,8 +391,10 @@ class Player {
       }
     }
 
-    // 3. If deep stuck -> Materialization Misfire (Death)
-    this.hp = 0;
+    // 3. Fallback: Safety Spawn (Don't Kill)
+    // If deep stuck, warp to map center or default spawn
+    this.x = 400; 
+    this.y = 300;
   }
 }
 

@@ -19,6 +19,12 @@ let joyManager = null;
 
 const skillCD = ref(0);
 const maxSkillCD = ref(1);
+const isDead = ref(false);
+const killedBy = ref("");
+const killedByHero = ref("");
+const respawnTimer = ref(0);
+const killMessages = ref([]); // { id, text }
+
 
 // Game State
 let players = [];
@@ -48,6 +54,11 @@ onMounted(async () => {
     return;
   }
 
+  // Ensure Auth Profile is loaded (Fix for "Unknown" on refresh)
+  if (auth.token && !auth.user) {
+    await auth.fetchProfile();
+  }
+
   // Auto-detect URL for production (same origin), localhost for dev
   const socketUrl = import.meta.env.PROD
     ? window.location.origin
@@ -74,6 +85,21 @@ onMounted(async () => {
     myId = data.playerId;
   });
 
+  socket.value.on("player_died", (data) => {
+    spawnExplosion(data.x, data.y, data.color);
+  });
+
+  socket.value.on("kill_confirmed", (data) => {
+    const id = Date.now();
+    killMessages.value.push({ id, text: `YOU ELIMINATED ${data.victim}` });
+    setTimeout(() => {
+      const idx = killMessages.value.findIndex(m => m.id === id);
+      if (idx !== -1) killMessages.value.splice(idx, 1);
+    }, 3000);
+  });
+
+
+
   socket.value.on("server_update", (state) => {
     players = state.players;
     projectiles = state.projectiles; // Bullets
@@ -84,8 +110,16 @@ onMounted(async () => {
     if (me) {
       skillCD.value = me.skillCD || 0; // Default to 0 if undefined
       maxSkillCD.value = me.maxSkillCD || 5000;
+      isDead.value = !!me.isDead;
+      if (isDead.value) {
+         killedBy.value = me.killedBy || "Unknown";
+         killedByHero.value = me.killedByHero || "?";
+      }
+      if (isDead.value && me.respawnTime) {
+        respawnTimer.value = Math.ceil(Math.max(0, me.respawnTime - Date.now()) / 1000);
+      }
     } else {
-      // Fallback if player dead or not found
+      // Fallback if player dead or not found (and not in list yet)
       skillCD.value = 0;
     }
   });
@@ -290,16 +324,29 @@ const drawMap = (ctx) => {
   ctx.shadowBlur = 0; // Reset
 
   // Draw Obstacles
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+
   mapData.obstacles.forEach((obs) => {
     const screenX = obs.x - cameraX;
     const screenY = obs.y - cameraY;
+
+    // OPTIMIZATION: Viewport Culling (Don't draw off-screen)
+    if (
+        screenX + obs.w < -50 ||
+        screenX > screenW + 50 ||
+        screenY + obs.h < -50 ||
+        screenY > screenH + 50
+    ) {
+        return;
+    }
 
     ctx.fillStyle = "#11111a";
     if (obs.type === "CORE") ctx.fillStyle = "#1a1a2e";
 
     ctx.fillRect(screenX, screenY, obs.w, obs.h);
 
-    // Neon Glow Border
+    // Neon Glow Border (Expensive, only draw if visible)
     ctx.shadowBlur = 15;
     if (obs.type === "WALL") {
       ctx.strokeStyle = "#00f3ff";
@@ -333,6 +380,13 @@ const createParticle = (x, y, color, speed, life) => {
   });
 };
 
+const spawnExplosion = (x, y, color) => {
+  for (let i = 0; i < 30; i++) {
+    createParticle(x, y, color, 5 + Math.random() * 10, 30 + Math.random() * 20);
+  }
+};
+
+
 const updateParticles = () => {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -347,9 +401,8 @@ const drawParticles = (ctx) => {
   particles.forEach((p) => {
     ctx.globalAlpha = p.life / p.maxLife;
     ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x - cameraX, p.y - cameraY, 2, 0, Math.PI * 2);
-    ctx.fill();
+    // OPTIMIZATION: Use fillRect instead of arc (much faster)
+    ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
     ctx.globalAlpha = 1.0;
   });
 };
@@ -376,6 +429,9 @@ const drawProjectiles = (ctx) => {
 };
 
 const drawPlayer = (ctx, p) => {
+  // Hide Dead Players (Ghosts) from others
+  if (p.isDead && p.id !== myId) return;
+
   const screenX = p.x - cameraX;
   const screenY = p.y - cameraY;
   const isMe = p.id === myId;
@@ -428,9 +484,54 @@ const drawPlayer = (ctx, p) => {
     ctx.fill();
   }
 
-  // --- HERO VISUALS ---
   // Use Class to determine shape if specific hero not defined
   const heroClass = p.heroClass || "Damage";
+
+  // --- ACTIVE SKILL AURA (Energy Pulse) ---
+  if (p.isSkillActive || p.shield) {
+    const time = Date.now() / 1000; // Seconds
+    
+    ctx.save();
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = "#FFD700"; // Gold Glow
+
+    // Draw 3 expanding waves
+    for (let i = 0; i < 3; i++) {
+      // Stagger the waves
+      const progress = (time + i * 0.33) % 1; // 0.0 to 1.0
+      
+      // Radius expands from 25 to 60
+      const radius = 30 + progress * 40;
+      
+      // Alpha fades from 0.8 to 0
+      const alpha = 0.8 * (1 - progress);
+      
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      
+      // Gradient Color: Gold to Cyan
+      if (i % 2 === 0) {
+          ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`; // Gold
+      } else {
+          ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`; // Cyan
+      }
+      
+      ctx.lineWidth = 3 - progress * 2; // Thins out
+      ctx.stroke();
+    }
+    
+    // Core Energy
+    ctx.beginPath();
+    ctx.arc(0, 0, 30, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 215, 0, 0.2)";
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // --- HERO VISUALS ---
+  // Use Class to determine shape if specific hero not defined
+  // heroClass already defined above for Aura logic
 
   if (heroClass === "Tank") {
     // TANK (Hexagon)
@@ -456,23 +557,44 @@ const drawPlayer = (ctx, p) => {
       ctx.lineWidth = 5;
       ctx.stroke();
     }
-  } else if (p.isFrozen && p.freezeEndTime) {
-    // MELTING ICE CUBE
-    const remaining = p.freezeEndTime - Date.now();
-    if (remaining > 0) {
-      const maxDuration = 2000;
-      const progress = Math.max(0, remaining / maxDuration); // 1.0 -> 0.0
-
-      // Visual: Fade out and shrink slightly
-      const size = 60 * (0.8 + 0.2 * progress);
-      const alpha = 0.5 + 0.5 * progress;
-
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      // Draw centered image
-      ctx.drawImage(iceImg, -size / 2, -size / 2, size, size);
-      ctx.restore();
-    }
+  } else if (p.isFrozen) {
+     // IMPROVED FREEZE VISUAL (Ice Crystal Overlay)
+     // Procedural jagged shape
+     ctx.save();
+     ctx.beginPath();
+     const spikes = 8;
+     const outerRadius = 45;
+     const innerRadius = 25;
+     
+     // Shivering effect
+     const shiverX = (Math.random() - 0.5) * 3;
+     const shiverY = (Math.random() - 0.5) * 3;
+     ctx.translate(shiverX, shiverY);
+     
+     for(let i=0; i<spikes; i++) {
+       const step = Math.PI / spikes;
+       const rot = Math.PI / 2 * 3;
+       let x = 0;
+       let y = 0;
+       
+       let ang = i * step * 2 + rot;
+       x = Math.cos(ang) * outerRadius;
+       y = Math.sin(ang) * outerRadius;
+       ctx.lineTo(x, y);
+       
+       ang = i * step * 2 + step + rot;
+       x = Math.cos(ang) * innerRadius;
+       y = Math.sin(ang) * innerRadius;
+       ctx.lineTo(x, y);
+     }
+     ctx.closePath();
+     
+     ctx.fillStyle = "rgba(0, 243, 255, 0.6)";
+     ctx.fill();
+     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+     ctx.lineWidth = 2;
+     ctx.stroke();
+     ctx.restore();
   } else if (heroClass === "Speed") {
     // SPEED (Arrow/Dart) - Point UP
     ctx.fillStyle = primaryColor;
@@ -643,7 +765,25 @@ const loop = (ctx) => {
 <template>
   <div class="game-view">
     <canvas ref="canvasRef" class="game-canvas"></canvas>
-    <div class="hud">
+    
+    <!-- Kill Feed -->
+    <div class="kill-feed">
+        <div v-for="msg in killMessages" :key="msg.id" class="kill-msg">
+            {{ msg.text }}
+        </div>
+    </div>
+
+    <!-- Respawn Overlay -->
+
+    <div class="respawn-overlay" v-if="isDead">
+        <h1>YOU DIED</h1>
+        <h2 style="color: #ff3333; margin-bottom: 5px;">ELIMINATED BY {{ killedBy }}</h2>
+        <h3 style="color: #00f3ff; margin-bottom: 20px;">HERO: {{ killedByHero }}</h3>
+        <div class="respawn-timer">{{ respawnTimer }}</div>
+        <p>RESPAWNING...</p>
+    </div>
+
+    <div class="hud" v-if="!isDead">
       <div class="hud-panel left">
         <h3>HERO: {{ gameStore.selectedHero?.name || "UNKNOWN" }}</h3>
       </div>
@@ -736,7 +876,36 @@ const loop = (ctx) => {
   overflow: hidden;
 }
 
+.kill-feed {
+  position: absolute;
+  bottom: 180px; /* Above Skill Button (which is ~80px-150px) */
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse; /* Stack upwards from bottom */
+  align-items: center;
+  pointer-events: none;
+  z-index: 500;
+}
+
+.kill-msg {
+  color: #ff0033;
+  font-family: 'Segoe UI', sans-serif;
+  font-size: 14px; /* Much smaller */
+  font-weight: 800;
+  text-transform: uppercase;
+  text-shadow: 0 0 5px rgba(255, 0, 0, 0.8);
+  margin-bottom: 2px;
+  animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .game-canvas {
+
   display: block;
 }
 
@@ -807,6 +976,49 @@ const loop = (ctx) => {
   flex-direction: column;
   align-items: center;
   gap: 5px;
+}
+
+.respawn-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(20, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+  animation: fadeIn 0.5s;
+}
+
+.respawn-overlay h1 {
+  color: #ff0033;
+  font-size: 5rem;
+  letter-spacing: 10px;
+  text-shadow: 0 0 20px #ff0033;
+  margin-bottom: 2rem;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.respawn-timer {
+  font-size: 6rem;
+  color: #fff;
+  font-weight: bold;
+  text-shadow: 0 0 10px #fff;
+}
+
+.respawn-overlay p {
+  color: #aaa;
+  font-size: 1.5rem;
+  letter-spacing: 5px;
+  margin-top: 1rem;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .skill-box {

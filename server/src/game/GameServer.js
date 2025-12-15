@@ -7,7 +7,9 @@ class GameServer {
     this.io = io;
     this.players = new Map();
     this.projectiles = [];
+    this.projectiles = [];
     this.entities = []; // Mines, etc.
+    this.disconnectedPlayers = new Map(); // Store { username, player, timeout }
 
     this.io.on("connection", (socket) => {
       console.log("Player connected:", socket.id);
@@ -17,14 +19,46 @@ class GameServer {
         try {
           const hero = await Hero.findByPk(heroId);
           if (hero) {
-            this.players.set(
-              socket.id,
-              new Player(socket.id, hero.toJSON(), username, skinColor)
-            );
-            const player = this.players.get(socket.id);
-            const spawn = this.getSafeSpawn();
-            player.x = spawn.x;
-            player.y = spawn.y;
+            // Check Reconnection
+            let restored = false;
+            if (username && username !== "Unknown") {
+               const saved = this.disconnectedPlayers.get(username);
+               // Check if same Hero
+               if (saved && saved.player.hero.id == heroId) {
+                 // Restore State
+                 clearTimeout(saved.timeout);
+                 this.disconnectedPlayers.delete(username);
+                 
+                 const p = saved.player;
+                 const oldId = p.id; // Capture old ID
+                 p.id = socket.id; // Update Socket ID
+                 p.keys = { w: false, a: false, s: false, d: false, space: false }; // Reset inputs
+                 
+                 // Transfer ownership of Mines/Projectiles
+                 this.entities.forEach(ent => {
+                    if (ent.ownerId === oldId) ent.ownerId = socket.id;
+                 });
+                 this.projectiles.forEach(proj => {
+                    if (proj.ownerId === oldId) proj.ownerId = socket.id;
+                 });
+
+                 this.players.set(socket.id, p);
+                 restored = true;
+                 console.log(`Restored session for ${username}`);
+               }
+            }
+
+            if (!restored) {
+               this.players.set(
+                socket.id,
+                new Player(socket.id, hero.toJSON(), username, skinColor)
+               );
+               const player = this.players.get(socket.id);
+               const spawn = this.getSafeSpawn();
+               player.x = spawn.x;
+               player.y = spawn.y;
+            }
+            
             socket.join("game_room");
             // Send initial Game State AND Map Data
             socket.emit("game_init", {
@@ -54,6 +88,11 @@ class GameServer {
             items.forEach((item) => {
               if (item.type === "MINE") {
                 this.entities.push(item);
+                // Mine Lifetime
+                setTimeout(() => {
+                  const idx = this.entities.indexOf(item);
+                  if (idx > -1) this.entities.splice(idx, 1);
+                }, item.life);
               } else if (item.type === "WALL_TEMP") {
                 // Temporary Wall
                 this.entities.push(item);
@@ -70,7 +109,30 @@ class GameServer {
       });
 
       socket.on("disconnect", () => {
-        this.players.delete(socket.id);
+        const p = this.players.get(socket.id);
+        if (p) {
+           this.players.delete(socket.id);
+           
+           // Save State if User is known
+           if (p.username && p.username !== "Unknown") {
+              // 15 Seconds Grace Period
+              const timeout = setTimeout(() => {
+                 this.disconnectedPlayers.delete(p.username);
+                 // Cleanup Entities (Mines/Walls) for permanently disconnected player
+                 // Remove items owned by the old socket ID
+                 for (let i = this.entities.length - 1; i >= 0; i--) {
+                    if (this.entities[i].ownerId === socket.id) {
+                        this.entities.splice(i, 1);
+                    }
+                 }
+              }, 15000);
+              
+              this.disconnectedPlayers.set(p.username, {
+                 player: p,
+                 timeout
+              });
+           }
+        }
       });
     });
 
@@ -89,6 +151,49 @@ class GameServer {
 
       // 1. Update Players & Handle Shooting
       this.players.forEach((player) => {
+        // Respawn Logic
+        if (player.isDead) {
+          if (Date.now() > player.respawnTime) {
+             // Respawn Now - Restore Stats
+             player.isDead = false;
+             player.hp = player.maxHp;
+             // Coordinates already set at death time
+             player.cooldowns.skill = 0;
+             player.cooldowns.shoot = 0;
+             player.freezeEndTime = 0;
+             player.isFrozen = false;
+             player.killedBy = null;
+             player.killedByHero = null;
+          } else {
+             // Still dead, send state but skip update
+
+             state.players.push({
+                id: player.id,
+                x: player.x,
+                y: player.y,
+                hp: 0, 
+                maxHp: player.maxHp,
+                hero: player.hero.name,
+                heroClass: player.hero.class,
+                color: player.color,
+                angle: player.mouseAngle,
+                shield: false,
+                invisible: false,
+                isFrozen: false,
+                isDead: true,
+                killedBy: player.killedBy,
+                killedByHero: player.killedByHero,
+                respawnTime: player.respawnTime,
+
+                skillCD: 0,
+                username: player.username,
+                maxSkillCD: player.hero.stats.cooldown,
+                kills: player.kills,
+             });
+             return; 
+          }
+        }
+
         player.update(dt);
 
         // Shoot check
@@ -112,6 +217,10 @@ class GameServer {
           shield: player.shieldActive,
           invisible: player.isInvisible, // Send stealth state
           isFrozen: player.isFrozen, // Send frozen state
+          isPhasing: player.isPhasing,
+          rapidFire: player.rapidFire,
+          isRooted: player.isRooted,
+          isSkillActive: player.isSkillActive,
           freezeEndTime: player.freezeEndTime || 0, // Send freeze end time
           skillCD: player.cooldowns.skill,
           username: player.username, // Send Username
@@ -157,6 +266,8 @@ class GameServer {
         // Collision check with players
         for (const [id, player] of this.players) {
           if (p.ownerId === id) continue; // Don't hit self
+          if (player.isDead) continue; // Ghost Mode: Bullets pass through dead players
+
 
           // Simple Circle Collision
           const dx = p.x - player.x;
@@ -199,13 +310,28 @@ class GameServer {
                 killer.kills++;
                 killer.hp = Math.min(killer.maxHp, killer.hp + 50);
                 this.awardCoins(killer.username, 50);
+                // NOTIFY KILLER
+                this.io.to(p.ownerId).emit("kill_confirmed", { victim: player.username || player.hero.name });
               }
-              player.hp = player.maxHp;
+              // TRIGGER DEATH
+              const deathX = player.x;
+              const deathY = player.y;
+              player.hp = 0;
+              player.isDead = true;
+              const kName = killer ? (killer.username || "Unknown") : "Unknown";
+              const hName = (killer && killer.hero) ? (killer.hero.name || killer.hero) : "?";
+              player.killedBy = kName;
+              player.killedByHero = typeof hName === 'string' ? hName : "?";
+              player.isFrozen = false; // Clear Frost
+              player.freezeEndTime = 0;
+              player.respawnTime = Date.now() + 5000; // 5 Seconds
+              // Teleport to safe zone immediately (Invisible)
               const spawn = this.getSafeSpawn();
               player.x = spawn.x;
               player.y = spawn.y;
-              player.cooldowns.skill = 0;
-              player.cooldowns.shoot = 0;
+              
+              // Explosion Event
+              this.io.to("game_room").emit("player_died", { x: deathX, y: deathY, color: player.color });
             }
             break; // Projectile destroyed
           }
@@ -219,7 +345,10 @@ class GameServer {
         // Simple collision with any player (even owner? maybe delay arming? for MVP instant arm)
         for (const [id, player] of this.players) {
           // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
+          // Optional: Don't hit owner immediately? Let's say mines are dangerous to everyone OR just enemies
           if (ent.ownerId === id) continue;
+          if (player.isDead) continue; // Ghost Mode
+
 
           const dx = ent.x - player.x;
           const dy = ent.y - player.y;
@@ -235,11 +364,28 @@ class GameServer {
               const killer = this.players.get(ent.ownerId);
               if (killer) {
                 this.awardCoins(killer.username, 50);
+                // NOTIFY KILLER (Mine)
+                this.io.to(ent.ownerId).emit("kill_confirmed", { victim: player.username || player.hero.name });
               }
-              player.hp = player.maxHp;
+              // TRIGGER DEATH
+              const deathX = player.x;
+              const deathY = player.y;
+              player.hp = 0;
+              player.isDead = true;
+              const kName = killer ? (killer.username || "Unknown") : "Unknown";
+              const hName = (killer && killer.hero) ? (killer.hero.name || killer.hero) : "?";
+              player.killedBy = kName;
+              player.killedByHero = typeof hName === 'string' ? hName : "?";
+              player.isFrozen = false; // Clear Frost
+              player.freezeEndTime = 0;
+              player.respawnTime = Date.now() + 5000;
+              // Teleport to safe zone immediately (Invisible)
               const spawn = this.getSafeSpawn();
               player.x = spawn.x;
               player.y = spawn.y;
+              
+              // Explosion Event
+              this.io.to("game_room").emit("player_died", { x: deathX, y: deathY, color: player.color });
             }
             break;
           }
