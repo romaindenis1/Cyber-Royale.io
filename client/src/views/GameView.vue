@@ -35,6 +35,22 @@ let cameraX = 0;
 let cameraY = 0;
 let myId = null;
 
+// VFX State
+let shakeIntensity = 0;
+let shakeDuration = 0;
+let shakeX = 0;
+let shakeY = 0;
+let flashAlpha = 0;
+
+const addScreenShake = (intensity, duration) => {
+  shakeIntensity = intensity;
+  shakeDuration = duration;
+};
+
+const triggerFlash = (alpha) => {
+  flashAlpha = alpha;
+};
+
 // Assets
 const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
@@ -96,6 +112,7 @@ onMounted(async () => {
 
   socket.value.on("visual_effect", (data) => {
     if (data.type === "shockwave") {
+      createShockwave(data.x, data.y, data.color || "#ffffff");
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
       createShockwaveVisual(data.x, data.y, data.color || "#ffffff"); // Add Ring
     } else if (data.type === "poison_hit") {
@@ -110,6 +127,7 @@ onMounted(async () => {
     } else if (data.type === "black_hole_explode") {
       spawnExplosion(data.x, data.y, "#d000ff");
       createShockwaveVisual(data.x, data.y, "#bf00ff");
+      createShockwave(data.x, data.y, "#bf00ff");
       addScreenShake(15, 20);
       triggerFlash(0.5);
     }
@@ -391,6 +409,50 @@ const drawMap = (ctx) => {
 };
 
 // === PARTICLES & SHOCKWAVES ===
+// === SHOCKWAVES ===
+let shockwaves = [];
+
+const createShockwave = (x, y, color) => {
+  shockwaves.push({
+    x,
+    y,
+    color,
+    radius: 10,
+    maxRadius: 300,
+    alpha: 1.0,
+    speed: 15,
+  });
+};
+
+const updateShockwaves = () => {
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.radius += s.speed;
+    s.alpha -= 0.05; // Fade out
+    if (s.alpha <= 0) shockwaves.splice(i, 1);
+  }
+};
+
+const drawShockwaves = (ctx) => {
+  ctx.save();
+  shockwaves.forEach((s) => {
+    const sx = s.x - cameraX;
+    const sy = s.y - cameraY;
+    ctx.beginPath();
+    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 5;
+    ctx.globalAlpha = s.alpha;
+    ctx.stroke();
+    // Inner fill for extra "pop"
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = s.alpha * 0.2;
+    ctx.fill();
+  });
+  ctx.restore();
+};
+
+// === PARTICLES ===
 let particles = [];
 let shockwaves = [];
 
@@ -419,11 +481,14 @@ const createParticle = (x, y, color, speed, life, type = "circle") => {
     type,
     angle: Math.random() * Math.PI, 
     rotSpeed: (Math.random() - 0.5) * 0.2, 
+    angle: Math.random() * Math.PI, // Rotation for debris
+    rotSpeed: (Math.random() - 0.5) * 0.2, // Spin
   });
 };
 
 const spawnExplosion = (x, y, color) => {
-  for (let i = 0; i < 30; i++) {
+  // 1. Dust / Smoke (Small)
+  for (let i = 0; i < 20; i++) {
     createParticle(
       x,
       y,
@@ -431,6 +496,23 @@ const spawnExplosion = (x, y, color) => {
       5 + Math.random() * 10,
       30 + Math.random() * 20
     );
+  }
+  // 2. Debris (Chunks - Larger, slower)
+  for (let i = 0; i < 10; i++) {
+    createParticle(
+      x,
+      y,
+      color,
+      2 + Math.random() * 8,
+      40 + Math.random() * 20,
+      "debris"
+    );
+  }
+};
+
+const spawnHitSparks = (x, y, color) => {
+  for (let i = 0; i < 15; i++) {
+    createParticle(x, y, color, 3 + Math.random() * 6, 15 + Math.random() * 10);
   }
 };
 
@@ -486,6 +568,13 @@ const drawParticles = (ctx) => {
     } else {
       ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
     }
+      ctx.fillRect(-3, -3, 6, 6); // Larger
+      ctx.restore();
+    } else {
+      // Standard Spark
+      ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
+    }
+
     ctx.globalAlpha = 1.0;
   });
 };
@@ -494,6 +583,34 @@ const drawProjectiles = (ctx) => {
   projectiles.forEach((p) => {
     // Skip mines here if they are in 'entities' array, usually projectiles are bullets
     if (p.type === "MINE") return;
+
+    // BLACK HOLE SHOT (Nova)
+    if (p.type === "BLACK_HOLE_SHOT") {
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      // Dark Orb (Much Larger)
+      ctx.beginPath();
+      ctx.arc(0, 0, 20, 0, Math.PI * 2);
+      ctx.fillStyle = "#000";
+      ctx.fill();
+      ctx.strokeStyle = "#800080"; // Purple
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Aura
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#800080";
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(128, 0, 128, 0.5)";
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
 
     // MINE PROJECTILE (Techno)
     if (p.type === "MINE_PROJ") {
@@ -594,18 +711,65 @@ const drawPlayer = (ctx, p) => {
   }
 
   ctx.save();
+
+  // --- FLASH EFFECT ON HIT (Highest Priority) ---
+  if (p.flashTime > 0) {
+    ctx.translate(screenX, screenY);
+    ctx.rotate(p.angle + Math.PI / 2);
+
+    // Draw WHITE silhouette
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(0, -30); // Tip
+    ctx.lineTo(20, 20);
+    ctx.lineTo(-20, 20);
+    ctx.fill();
+
+    ctx.restore();
+    return; // Skip standard drawing
+  }
+
   // Stealth Handler
   if (p.invisible) {
     if (p.id === myId) {
-      ctx.globalAlpha = 0.4; // Visible to self as ghost
+      ctx.globalAlpha = 0.4; // Visible to self
     } else {
       ctx.globalAlpha = 0; // Invisible to others
     }
   }
 
   ctx.translate(screenX, screenY);
-  ctx.rotate(p.angle + Math.PI / 2); // Rotate 90deg so 0rad (Right) becomes Down? No.
-  // Facing UP rotated Down = Facing Right. CORRECT.
+  ctx.rotate(p.angle + Math.PI / 2);
+  // --- DRAW PLAYER SHIP ---
+  // Layer 1: Base Hull
+  ctx.fillStyle = primaryColor;
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = primaryColor;
+
+  ctx.beginPath();
+  ctx.moveTo(0, -25); // Nose
+  ctx.lineTo(20, 20); // Right Rear
+  ctx.lineTo(0, 10); // Rear Indent
+  ctx.lineTo(-20, 20); // Left Rear
+  ctx.closePath();
+  ctx.fill();
+
+  // Reset Shadow
+  ctx.shadowBlur = 0;
+
+  // Layer 2: Cockpit
+  ctx.fillStyle = "#ffffff"; // Glass
+  ctx.beginPath();
+  ctx.arc(0, 5, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Layer 3: Engine Glow (Rear)
+  ctx.fillStyle = "#00ffff";
+  ctx.beginPath();
+  ctx.arc(0, 15, 4 + Math.random() * 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Continue to Stealth/Laser/Reticle (still in transformed state)
 
   // --- STEALTH RING INDICATOR (User Request) ---
   if (p.invisible && isMe) {
@@ -875,10 +1039,13 @@ const drawPlayer = (ctx, p) => {
   if (p.invisible && p.id !== myId) return; // Don't show HUD for hidden enemies
 
   // 1. HP Bar
+  const maxHp = p.maxHp || 100;
+  const hpPercent = Math.max(0, Math.min(1, p.hp / maxHp));
+
   ctx.fillStyle = "#333";
   ctx.fillRect(screenX - 30, screenY - 55, 60, 6);
   ctx.fillStyle = "#00ff00";
-  ctx.fillRect(screenX - 30, screenY - 55, 60 * (p.hp / p.maxHp), 6);
+  ctx.fillRect(screenX - 30, screenY - 55, 60 * hpPercent, 6);
 
   // 3. Username Tag
   ctx.fillStyle = "#fff";
@@ -947,8 +1114,30 @@ const loop = (ctx) => {
 
   // UPDATE & CLEAR
   updateParticles();
+  updateShockwaves();
+
+  // Update Shake
+  if (shakeDuration > 0) {
+    shakeDuration--;
+    shakeX = (Math.random() - 0.5) * shakeIntensity;
+    shakeY = (Math.random() - 0.5) * shakeIntensity;
+    shakeIntensity *= 0.9; // Decay
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+
   ctx.fillStyle = "#050510";
   ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+
+  // FLASH OVERLAY (Decay)
+  if (flashAlpha > 0) {
+    flashAlpha -= 0.02;
+    if (flashAlpha < 0) flashAlpha = 0;
+  }
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY); // Apply Shake
 
   // Draw World
   drawMap(ctx);
@@ -959,8 +1148,9 @@ const loop = (ctx) => {
 
   // Draw Projectiles (Bullets)
   drawProjectiles(ctx);
+  drawShockwaves(ctx);
 
-  // Draw Entities (Mines)
+  // Draw Entities (Mines, Decoys, Black Holes) - BACKGROUND LAYER
   entities.forEach((ent) => {
     // This array contains only mines now
     if (ent.type === "STICKY_GRENADE") {
@@ -988,6 +1178,8 @@ const loop = (ctx) => {
       ctx.restore();
     } else if (ent.type === "MINE") {
     } else if (ent.type === "BLACK_HOLE") {
+    // BLACK HOLE (Nova)
+    if (ent.type === "BLACK_HOLE") {
       const sx = ent.x - cameraX;
       const sy = ent.y - cameraY;
       ctx.save();
@@ -995,6 +1187,12 @@ const loop = (ctx) => {
 
       // BLINKING LOGIC (Using synced life)
       const time = Date.now() / 1000;
+      // Removed Opacity Blinking as per user request ("Animation Disappearing")
+      // Instead, maybe just pulse the ring color or speed up rotation?
+      // For now, keep it solid and stable.
+
+      const time = Date.now() / 1000;
+      const radius = 60;
 
       // 1. PHOTON RING (Glowing White/Blue Halo)
       ctx.shadowBlur = 30;
@@ -1107,8 +1305,25 @@ const loop = (ctx) => {
     }
   });
 
+  // Draw Projectiles (Bullets) - FOREGROUND LAYER (On top of Black Hole)
+  drawProjectiles(ctx);
+
   // Draw Players
-  players.forEach((p) => drawPlayer(ctx, p));
+  players.forEach((p) => {
+    drawPlayer(ctx, p);
+    if (p.flashTime > 0) p.flashTime--; // Decay flash
+  });
+
+  // Draw Particles (ON TOP)
+  drawParticles(ctx);
+
+  ctx.restore(); // End Shake Translation
+
+  // DRAW FLASH OVERLAY (Post-Shake)
+  if (flashAlpha > 0) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+  }
 
   // Draw UI Layers
   drawLeaderboard(ctx);

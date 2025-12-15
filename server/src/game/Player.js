@@ -274,23 +274,20 @@ class Player {
       setTimeout(() => (this.isInvisible = false), 5000);
     } else if (name === "Nova") {
       duration = 500;
-      // Nova Blast (Instant)
-      const projs = [];
-      for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        projs.push({
-          type: "PROJECTILE",
-          id: Math.random().toString(36).substr(2, 9),
-          x: this.x,
-          y: this.y,
-          vx: Math.cos(angle) * 500,
-          vy: Math.sin(angle) * 500,
-          ownerId: this.id,
-          color: this.color,
-          life: 1000,
-        });
-      }
-      result = projs;
+      // Black Hole Shot
+      // Fires a projectile that travels, stops, and becomes a Black Hole
+      result = {
+        type: "BLACK_HOLE_SHOT",
+        id: Math.random().toString(36).substr(2, 9),
+        x: this.x,
+        y: this.y,
+        vx: Math.cos(this.mouseAngle) * 600,
+        vy: Math.sin(this.mouseAngle) * 600,
+        ownerId: this.id,
+        life: 1000, // Travels for 1s
+        targetX: this.x + Math.cos(this.mouseAngle) * 600, // Optional help?
+        targetY: this.y + Math.sin(this.mouseAngle) * 600,
+      };
     }
 
     // --- NEW HEROES (EXPANSION) ---
