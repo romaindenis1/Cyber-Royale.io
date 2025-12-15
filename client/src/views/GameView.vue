@@ -35,6 +35,22 @@ let cameraX = 0;
 let cameraY = 0;
 let myId = null;
 
+// VFX State
+let shakeIntensity = 0;
+let shakeDuration = 0;
+let shakeX = 0;
+let shakeY = 0;
+let flashAlpha = 0;
+
+const addScreenShake = (intensity, duration) => {
+  shakeIntensity = intensity;
+  shakeDuration = duration;
+};
+
+const triggerFlash = (alpha) => {
+  flashAlpha = alpha;
+};
+
 // Assets
 const iceImg = new Image();
 iceImg.src = "/assets/ice_cube.png";
@@ -96,11 +112,22 @@ onMounted(async () => {
 
   socket.value.on("visual_effect", (data) => {
     if (data.type === "shockwave") {
+      createShockwave(data.x, data.y, data.color || "#ffffff");
       spawnExplosion(data.x, data.y, data.color || "#ffffff");
-      // Could be enhanced with a ring later, but explosion is good for now
     } else if (data.type === "poison_hit") {
-      // Spawn green bubbles on victim
       spawnExplosion(data.x, data.y, "#32cd32");
+    } else if (data.type === "hit") {
+      spawnHitSparks(data.x, data.y, data.color);
+      // Sprite Flash Logic
+      if (data.targetId) {
+        const victim = players.find((p) => p.id === data.targetId);
+        if (victim) victim.flashTime = 5; // Flash for 5 frames
+      }
+    } else if (data.type === "black_hole_explode") {
+      spawnExplosion(data.x, data.y, "#d000ff");
+      createShockwave(data.x, data.y, "#bf00ff");
+      addScreenShake(15, 20);
+      triggerFlash(0.5);
     }
   });
 
@@ -379,10 +406,53 @@ const drawMap = (ctx) => {
   });
 };
 
+// === SHOCKWAVES ===
+let shockwaves = [];
+
+const createShockwave = (x, y, color) => {
+  shockwaves.push({
+    x,
+    y,
+    color,
+    radius: 10,
+    maxRadius: 300,
+    alpha: 1.0,
+    speed: 15,
+  });
+};
+
+const updateShockwaves = () => {
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.radius += s.speed;
+    s.alpha -= 0.05; // Fade out
+    if (s.alpha <= 0) shockwaves.splice(i, 1);
+  }
+};
+
+const drawShockwaves = (ctx) => {
+  ctx.save();
+  shockwaves.forEach((s) => {
+    const sx = s.x - cameraX;
+    const sy = s.y - cameraY;
+    ctx.beginPath();
+    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 5;
+    ctx.globalAlpha = s.alpha;
+    ctx.stroke();
+    // Inner fill for extra "pop"
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = s.alpha * 0.2;
+    ctx.fill();
+  });
+  ctx.restore();
+};
+
 // === PARTICLES ===
 let particles = [];
 
-const createParticle = (x, y, color, speed, life) => {
+const createParticle = (x, y, color, speed, life, type = "circle") => {
   const angle = Math.random() * Math.PI * 2;
   particles.push({
     x,
@@ -392,11 +462,15 @@ const createParticle = (x, y, color, speed, life) => {
     life,
     maxLife: life,
     color,
+    type,
+    angle: Math.random() * Math.PI, // Rotation for debris
+    rotSpeed: (Math.random() - 0.5) * 0.2, // Spin
   });
 };
 
 const spawnExplosion = (x, y, color) => {
-  for (let i = 0; i < 30; i++) {
+  // 1. Dust / Smoke (Small)
+  for (let i = 0; i < 20; i++) {
     createParticle(
       x,
       y,
@@ -404,6 +478,23 @@ const spawnExplosion = (x, y, color) => {
       5 + Math.random() * 10,
       30 + Math.random() * 20
     );
+  }
+  // 2. Debris (Chunks - Larger, slower)
+  for (let i = 0; i < 10; i++) {
+    createParticle(
+      x,
+      y,
+      color,
+      2 + Math.random() * 8,
+      40 + Math.random() * 20,
+      "debris"
+    );
+  }
+};
+
+const spawnHitSparks = (x, y, color) => {
+  for (let i = 0; i < 15; i++) {
+    createParticle(x, y, color, 3 + Math.random() * 6, 15 + Math.random() * 10);
   }
 };
 
@@ -413,6 +504,7 @@ const updateParticles = () => {
     p.x += p.vx;
     p.y += p.vy;
     p.life--;
+    if (p.type === "debris") p.angle += p.rotSpeed;
     if (p.life <= 0) particles.splice(i, 1);
   }
 };
@@ -421,8 +513,18 @@ const drawParticles = (ctx) => {
   particles.forEach((p) => {
     ctx.globalAlpha = p.life / p.maxLife;
     ctx.fillStyle = p.color;
-    // OPTIMIZATION: Use fillRect instead of arc (much faster)
-    ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
+
+    if (p.type === "debris") {
+      ctx.save();
+      ctx.translate(p.x - cameraX, p.y - cameraY);
+      ctx.rotate(p.angle);
+      ctx.fillRect(-3, -3, 6, 6); // Larger
+      ctx.restore();
+    } else {
+      // Standard Spark
+      ctx.fillRect(p.x - cameraX, p.y - cameraY, 4, 4);
+    }
+
     ctx.globalAlpha = 1.0;
   });
 };
@@ -431,6 +533,34 @@ const drawProjectiles = (ctx) => {
   projectiles.forEach((p) => {
     // Skip mines here if they are in 'entities' array, usually projectiles are bullets
     if (p.type === "MINE") return;
+
+    // BLACK HOLE SHOT (Nova)
+    if (p.type === "BLACK_HOLE_SHOT") {
+      const sx = p.x - cameraX;
+      const sy = p.y - cameraY;
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      // Dark Orb (Much Larger)
+      ctx.beginPath();
+      ctx.arc(0, 0, 20, 0, Math.PI * 2);
+      ctx.fillStyle = "#000";
+      ctx.fill();
+      ctx.strokeStyle = "#800080"; // Purple
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Aura
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#800080";
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(128, 0, 128, 0.5)";
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
 
     // MINE PROJECTILE (Techno)
     if (p.type === "MINE_PROJ") {
@@ -531,18 +661,65 @@ const drawPlayer = (ctx, p) => {
   }
 
   ctx.save();
+
+  // --- FLASH EFFECT ON HIT (Highest Priority) ---
+  if (p.flashTime > 0) {
+    ctx.translate(screenX, screenY);
+    ctx.rotate(p.angle + Math.PI / 2);
+
+    // Draw WHITE silhouette
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(0, -30); // Tip
+    ctx.lineTo(20, 20);
+    ctx.lineTo(-20, 20);
+    ctx.fill();
+
+    ctx.restore();
+    return; // Skip standard drawing
+  }
+
   // Stealth Handler
   if (p.invisible) {
     if (p.id === myId) {
-      ctx.globalAlpha = 0.4; // Visible to self as ghost
+      ctx.globalAlpha = 0.4; // Visible to self
     } else {
       ctx.globalAlpha = 0; // Invisible to others
     }
   }
 
   ctx.translate(screenX, screenY);
-  ctx.rotate(p.angle + Math.PI / 2); // Rotate 90deg so 0rad (Right) becomes Down? No.
-  // Facing UP rotated Down = Facing Right. CORRECT.
+  ctx.rotate(p.angle + Math.PI / 2);
+  // --- DRAW PLAYER SHIP ---
+  // Layer 1: Base Hull
+  ctx.fillStyle = primaryColor;
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = primaryColor;
+
+  ctx.beginPath();
+  ctx.moveTo(0, -25); // Nose
+  ctx.lineTo(20, 20); // Right Rear
+  ctx.lineTo(0, 10); // Rear Indent
+  ctx.lineTo(-20, 20); // Left Rear
+  ctx.closePath();
+  ctx.fill();
+
+  // Reset Shadow
+  ctx.shadowBlur = 0;
+
+  // Layer 2: Cockpit
+  ctx.fillStyle = "#ffffff"; // Glass
+  ctx.beginPath();
+  ctx.arc(0, 5, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Layer 3: Engine Glow (Rear)
+  ctx.fillStyle = "#00ffff";
+  ctx.beginPath();
+  ctx.arc(0, 15, 4 + Math.random() * 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Continue to Stealth/Laser/Reticle (still in transformed state)
 
   // --- STEALTH RING INDICATOR (User Request) ---
   if (p.invisible && isMe) {
@@ -884,22 +1061,128 @@ const loop = (ctx) => {
 
   // UPDATE & CLEAR
   updateParticles();
+  updateShockwaves();
+
+  // Update Shake
+  if (shakeDuration > 0) {
+    shakeDuration--;
+    shakeX = (Math.random() - 0.5) * shakeIntensity;
+    shakeY = (Math.random() - 0.5) * shakeIntensity;
+    shakeIntensity *= 0.9; // Decay
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+  }
+
   ctx.fillStyle = "#050510";
   ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+
+  // FLASH OVERLAY (Decay)
+  if (flashAlpha > 0) {
+    flashAlpha -= 0.02;
+    if (flashAlpha < 0) flashAlpha = 0;
+  }
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY); // Apply Shake
 
   // Draw World
   drawMap(ctx);
 
-  // Draw Particles
-  drawParticles(ctx);
+  drawShockwaves(ctx);
 
-  // Draw Projectiles (Bullets)
-  drawProjectiles(ctx);
-
-  // Draw Entities (Mines)
+  // Draw Entities (Mines, Decoys, Black Holes) - BACKGROUND LAYER
   entities.forEach((ent) => {
-    // This array contains only mines now
-    if (ent.type === "MINE") {
+    // BLACK HOLE (Nova)
+    if (ent.type === "BLACK_HOLE") {
+      const sx = ent.x - cameraX;
+      const sy = ent.y - cameraY;
+      ctx.save();
+      ctx.translate(sx, sy);
+
+      // BLINKING LOGIC (Using synced life)
+      // Removed Opacity Blinking as per user request ("Animation Disappearing")
+      // Instead, maybe just pulse the ring color or speed up rotation?
+      // For now, keep it solid and stable.
+
+      const time = Date.now() / 1000;
+      const radius = 60;
+
+      // 1. PHOTON RING (Glowing White/Blue Halo)
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = "#e0ffff";
+      ctx.beginPath();
+      ctx.arc(0, 0, 42, 0, Math.PI * 2);
+      ctx.strokeStyle = "#fff"; // Solid White
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0; // Reset
+
+      // 2. EVENT HORIZON (Pitch Black)
+      ctx.beginPath();
+      ctx.globalAlpha = 1.0; // Always Solid
+      ctx.arc(0, 0, 40, 0, Math.PI * 2);
+      ctx.fillStyle = "#000";
+      ctx.fill();
+
+      // 3. INNER ACCRETION DISK (Fast, Bright Violet)
+      ctx.rotate(time * 2); // Fast Rotation
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        // Inner radius 50
+        ctx.arc(
+          0,
+          0,
+          50,
+          i * ((Math.PI * 2) / 3),
+          i * ((Math.PI * 2) / 3) + 1.5
+        );
+        ctx.strokeStyle = "#da70d6"; // Orchid/Violet
+        ctx.stroke();
+      }
+
+      // 4. OUTER ACCRETION DISK (Slow, Darker Purple, Reverse Spin)
+      ctx.rotate(-time * 3); // Reverse rotation relative to inner (net effect)
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 6;
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        // Outer radius 70
+        ctx.arc(
+          0,
+          0,
+          70,
+          i * ((Math.PI * 2) / 4),
+          i * ((Math.PI * 2) / 4) + 1.0
+        );
+        ctx.strokeStyle = "#9400d3"; // Dark Violet
+        ctx.stroke();
+      }
+
+      // 5. SUCTION LINES (Cyan/White - Moving Inward)
+      // Reset rotation for particles
+      ctx.rotate(time); // Just to keep them moving
+      if (Math.random() > 0.3) {
+        // Draw random line pointing to center
+        const angle = Math.random() * Math.PI * 2;
+        const outerDist = 120;
+        const innerDist = 50;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * outerDist, Math.sin(angle) * outerDist);
+        ctx.lineTo(Math.cos(angle) * innerDist, Math.sin(angle) * innerDist);
+        ctx.strokeStyle =
+          Math.random() > 0.5
+            ? "rgba(0, 255, 255, 0.3)"
+            : "rgba(255, 0, 255, 0.3)";
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 1.0;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    } else if (ent.type === "MINE") {
       const sx = ent.x - cameraX;
       const sy = ent.y - cameraY;
       ctx.beginPath();
@@ -936,8 +1219,25 @@ const loop = (ctx) => {
     }
   });
 
+  // Draw Projectiles (Bullets) - FOREGROUND LAYER (On top of Black Hole)
+  drawProjectiles(ctx);
+
   // Draw Players
-  players.forEach((p) => drawPlayer(ctx, p));
+  players.forEach((p) => {
+    drawPlayer(ctx, p);
+    if (p.flashTime > 0) p.flashTime--; // Decay flash
+  });
+
+  // Draw Particles (ON TOP)
+  drawParticles(ctx);
+
+  ctx.restore(); // End Shake Translation
+
+  // DRAW FLASH OVERLAY (Post-Shake)
+  if (flashAlpha > 0) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height);
+  }
 
   // Draw UI Layers
   drawLeaderboard(ctx);
